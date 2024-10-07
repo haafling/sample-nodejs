@@ -91,8 +91,7 @@ app.post('/analyze', async (req, res) => {
       url,
       gtmDomain,
       isProxified,
-      isGTMFound,
-      sourceCode
+      isGTMFound
     };
 
     console.log('Sending JSON response:', jsonResponse); // Log the JSON response
