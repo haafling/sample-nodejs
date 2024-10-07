@@ -9,7 +9,7 @@ puppeteer.use(StealthPlugin());
 app.use(express.json()); // Parse JSON bodies
 
 // Limite à 2 tâches simultanées
-const limit = pLimit(2);
+const limit = pLimit(1);
 
 app.post('/analyze', async (req, res) => {
   const { url } = req.body;
