@@ -23,6 +23,7 @@
     "puppeteer": "^23.2.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
-    "uglify-js": "^2.6.0"
+    "uglify-js": "^2.6.0",
+     "p-limit": "^3.0.2"
   }
 }

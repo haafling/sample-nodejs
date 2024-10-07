@@ -1,11 +1,15 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const express = require('express');
-const app = express();
+const pLimit = require('p-limit'); // Ajout de p-limit
 
+const app = express();
 puppeteer.use(StealthPlugin());
 
 app.use(express.json()); // Parse JSON bodies
+
+// Limite à 2 tâches simultanées
+const limit = pLimit(2);
 
 app.post('/analyze', async (req, res) => {
   const { url } = req.body;
@@ -17,6 +21,16 @@ app.post('/analyze', async (req, res) => {
     return res.status(400).json({ error: 'URL is required' });
   }
 
+  try {
+    // Utilise p-limit pour gérer une file d'attente et exécuter 2 tâches maximum à la fois
+    await limit(() => handleAnalysis(req, res, url));
+  } catch (error) {
+    console.error('Error occurred during the analysis:', error);
+    res.status(500).json({ error: 'Failed to analyze the page' });
+  }
+});
+
+async function handleAnalysis(req, res, url) {
   try {
     console.log(`Navigating to ${url}...`);
 
@@ -37,18 +51,18 @@ app.post('/analyze', async (req, res) => {
     console.log('Headers set. Navigating to the page...');
 
     // Ajouter l'interception des requêtes pour bloquer certains types de ressources
-await page.setRequestInterception(true);
+    await page.setRequestInterception(true);
 
-page.on('request', (req) => {
-  const resourceType = req.resourceType();
-  if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
-    req.abort(); // Bloque ces ressources pour accélérer le chargement
-  } else {
-    req.continue();
-  }
-});
+    page.on('request', (req) => {
+      const resourceType = req.resourceType();
+      if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+        req.abort(); // Bloque ces ressources pour accélérer le chargement
+      } else {
+        req.continue();
+      }
+    });
 
-    await page.goto(url, { waitUntil: 'networkidle2' });
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
 
     console.log('Page loaded. Extracting source code...');
     const sourceCode = await page.content();
@@ -62,7 +76,13 @@ page.on('request', (req) => {
 
       const gtmMatch = sourceCode.match(/src=["']([^"']*\?id=GTM-[^"']*)["']/);
       if (gtmMatch) {
-        const gtmSrc = gtmMatch[1];
+        let gtmSrc = gtmMatch[1];
+
+        // Si l'URL commence par "//", ajoutez "https:" pour en faire une URL complète
+        if (gtmSrc.startsWith('//')) {
+          gtmSrc = 'https:' + gtmSrc; // Ajouter "https:" comme schéma
+        }
+
         const gtmUrl = new URL(gtmSrc);
         gtmDomain = gtmUrl.hostname;
 
@@ -80,42 +100,34 @@ page.on('request', (req) => {
       }
     } else {
       console.log('No GTM ID found in the source code, checking for inline script...');
-      
-      // Utiliser une expression régulière pour capturer toutes les balises <script> une par une
+
       const scriptMatches = sourceCode.match(/<script[^>]*>([\s\S]*?)<\/script>/gi);
-
-    if (scriptMatches) {
-
-    scriptMatches.forEach((scriptTag) => {
-        // Vérifier si le script contient un ID GTM spécifique (ex. GTM-XXXXXXX)
-        if (/GTM-[A-Z0-9]+/.test(scriptTag)) {
+      if (scriptMatches) {
+        scriptMatches.forEach((scriptTag) => {
+          if (/GTM-[A-Z0-9]+/.test(scriptTag)) {
             isGTMFound = true;
             console.log('Found inline script containing GTM ID.');
             console.log('Captured script content:', scriptTag);  // Afficher le script capturé
 
-            // Extraire le nom de domaine
             const siteHostname = new URL(url).hostname;
             const mainDomain = siteHostname.split('.').slice(-2).join('.');
             const subdomainPattern = new RegExp(`\\b${mainDomain.replace('.', '\\.')}`, 'i');
 
-            // Vérifier si le domaine est présent dans le script capturé
             if (subdomainPattern.test(scriptTag)) {
-                console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
-                isProxified = true;
+              console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
+              isProxified = true;
             } else {
-                console.log('GTM is not proxified.');
+              console.log('GTM is not proxified.');
             }
+          }
+        });
+
+        if (!isGTMFound) {
+          console.log('No GTM-related inline script found.');
         }
-    });
-
-    // Si aucun script GTM n'a été trouvé
-    if (!isGTMFound) {
-        console.log('No GTM-related inline script found.');
-    }
-} else {
-    console.log('No <script> tags found in the source code.');
-}
-
+      } else {
+        console.log('No <script> tags found in the source code.');
+      }
     }
 
     await browser.close();
@@ -129,14 +141,13 @@ page.on('request', (req) => {
     };
 
     console.log('Sending JSON response:', jsonResponse); // Log the JSON response
-
     res.json(jsonResponse);
 
   } catch (error) {
     console.error('Error occurred during the analysis:', error);
     res.status(500).json({ error: 'Failed to analyze the page' });
   }
-});
+}
 
 app.listen(3000, '0.0.0.0', () => {
   console.log('Server is running on port 3000');
