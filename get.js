@@ -69,25 +69,26 @@ app.post('/analyze', async (req, res) => {
     } else {
       console.log('No GTM ID found in the source code, checking for inline script...');
       
-      const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\\s\\S]*?GTM-[\\s\\S]*?)</script>`, 'i'));
-      
+      const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\\s\\S]*?GTM-[A-Z0-9]+[\\s\\S]*?)</script>`, 'i'));
+
       if (scriptMatch) {
-        const scriptContent = scriptMatch[1];
-        console.log('Found inline script containing GTM ID.');
-        console.log(scriptContent);
-        isGTMFound = true;
-        const siteHostname = new URL(url).hostname;
-        const mainDomain = siteHostname.split('.').slice(-2).join('.');
-        const subdomainPattern = new RegExp(`\\b${mainDomain.replace('.', '\\.')}`, 'i');
-        
-        if (scriptContent.includes('GTM-') && subdomainPattern.test(scriptContent)) {
-          console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
-          isProxified = true;
-        } else {
-          console.log('GTM is not proxified.');
-        }
+          const scriptContent = scriptMatch[1];
+          console.log('Found inline script containing GTM ID.');
+          console.log('Captured script content:', scriptContent);  // Afficher le script capturé
+          isGTMFound = true;
+          
+          const siteHostname = new URL(url).hostname;
+          const mainDomain = siteHostname.split('.').slice(-2).join('.');
+          const subdomainPattern = new RegExp(`\\b${mainDomain.replace('.', '\\.')}`, 'i');
+      
+          if (scriptContent.includes('GTM-') && subdomainPattern.test(scriptContent)) {
+              console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
+              isProxified = true;
+          } else {
+              console.log('GTM is not proxified.');
+          }
       } else {
-        console.log('No GTM-related inline script found.');
+          console.log('No GTM-related inline script found.');
       }
 
     }
