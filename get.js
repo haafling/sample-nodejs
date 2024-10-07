@@ -74,6 +74,7 @@ app.post('/analyze', async (req, res) => {
       if (scriptMatch) {
         const scriptContent = scriptMatch[1];
         console.log('Found inline script containing GTM ID.');
+        console.log(scriptContent);
         isGTMFound = true;
         const siteHostname = new URL(url).hostname;
         const mainDomain = siteHostname.split('.').slice(-2).join('.');
@@ -88,6 +89,7 @@ app.post('/analyze', async (req, res) => {
       } else {
         console.log('No GTM-related inline script found.');
       }
+
     }
 
     await browser.close();
