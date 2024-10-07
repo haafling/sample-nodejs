@@ -73,15 +73,13 @@ app.post('/analyze', async (req, res) => {
       const scriptMatches = sourceCode.match(/<script[^>]*>([\s\S]*?)<\/script>/gi);
 
     if (scriptMatches) {
-    let isGTMFound = false;
-    let isProxified = false;
 
     scriptMatches.forEach((scriptTag) => {
         // Vérifier si le script contient un ID GTM spécifique (ex. GTM-XXXXXXX)
         if (/GTM-[A-Z0-9]+/.test(scriptTag)) {
+            isGTMFound = true;
             console.log('Found inline script containing GTM ID.');
             console.log('Captured script content:', scriptTag);  // Afficher le script capturé
-            isGTMFound = true;
 
             // Extraire le nom de domaine
             const siteHostname = new URL(url).hostname;
