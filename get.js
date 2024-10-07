@@ -36,7 +36,19 @@ app.post('/analyze', async (req, res) => {
 
     console.log('Headers set. Navigating to the page...');
 
-    await page.goto(url, { waitUntil: 'networkidle0' });
+    // Ajouter l'interception des requêtes pour bloquer certains types de ressources
+await page.setRequestInterception(true);
+
+page.on('request', (req) => {
+  const resourceType = req.resourceType();
+  if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+    req.abort(); // Bloque ces ressources pour accélérer le chargement
+  } else {
+    req.continue();
+  }
+});
+
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
     console.log('Page loaded. Extracting source code...');
     const sourceCode = await page.content();
