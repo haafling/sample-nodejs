@@ -67,22 +67,26 @@ app.post('/analyze', async (req, res) => {
         }
       }
     } else {
-      console.log('No GTM snippet found via script src.');
+      console.log('No GTM ID found in the source code, checking for inline script...');
+      
       const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\\s\\S]*?GTM-[\\s\\S]*?)</script>`, 'i'));
-
+      
       if (scriptMatch) {
-        console.log('GTM ID found within inline script.');
-        console.log(scriptMatch);
-        isGTMFound = true;
         const scriptContent = scriptMatch[1];
+        console.log('Found inline script containing GTM ID.');
+        isGTMFound = true;
         const siteHostname = new URL(url).hostname;
         const mainDomain = siteHostname.split('.').slice(-2).join('.');
-        const subdomainPattern = new RegExp(`\b${mainDomain.replace('.', '\.')}`, 'i');
-
+        const subdomainPattern = new RegExp(`\\b${mainDomain.replace('.', '\\.')}`, 'i');
+        
         if (scriptContent.includes('GTM-') && subdomainPattern.test(scriptContent)) {
+          console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
           isProxified = true;
-          console.log('The inline script appears to be proxified.');
+        } else {
+          console.log('GTM is not proxified.');
         }
+      } else {
+        console.log('No GTM-related inline script found.');
       }
     }
 
