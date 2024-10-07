@@ -22,7 +22,7 @@ app.post('/analyze', async (req, res) => {
 
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+      args: ['--no-sandbox', '--disable-setuid-sandbox'] // Ajoutez ces options
     });
     const page = await browser.newPage();
 
@@ -40,6 +40,8 @@ app.post('/analyze', async (req, res) => {
 
     console.log('Page loaded. Extracting source code...');
     const sourceCode = await page.content();
+
+    console.log('Page source code:', sourceCode); // Log the source code for debugging
 
     let isGTMFound = sourceCode.includes('?id=GTM-');
     let isProxified = false;
