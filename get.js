@@ -68,11 +68,13 @@ app.post('/analyze', async (req, res) => {
       }
     } else {
       console.log('No GTM snippet found via script src.');
-      const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\\s\\S]*?GTM-[\\s\\S]*?)</script>`, 'i'));
+      const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\s\S]*?(GTM-[\w-]+)[\s\S]*?)<\/script>`, 'i'));
 
       if (scriptMatch) {
         console.log('GTM ID found within inline script.');
         const scriptContent = scriptMatch[1];
+        isGTMFound = scriptMatch[2];
+
         const siteHostname = new URL(url).hostname;
         const mainDomain = siteHostname.split('.').slice(-2).join('.');
         const subdomainPattern = new RegExp(`\b${mainDomain.replace('.', '\.')}`, 'i');
@@ -91,8 +93,7 @@ app.post('/analyze', async (req, res) => {
       url,
       gtmDomain,
       isProxified,
-      isGTMFound,
-      sourceCode
+      isGTMFound
     };
 
     console.log('Sending JSON response:', jsonResponse); // Log the JSON response
