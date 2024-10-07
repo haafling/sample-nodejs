@@ -20,7 +20,10 @@ app.post('/analyze', async (req, res) => {
   try {
     console.log(`Navigating to ${url}...`);
 
-    const browser = await puppeteer.launch({ headless: true });
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'] // Ajoutez ces options
+    });
     const page = await browser.newPage();
 
     console.log('Browser launched, new page created.');
