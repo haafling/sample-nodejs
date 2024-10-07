@@ -69,27 +69,42 @@ app.post('/analyze', async (req, res) => {
     } else {
       console.log('No GTM ID found in the source code, checking for inline script...');
       
-      const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\\s\\S]*?GTM-[A-Z0-9]+[\\s\\S]*?)</script>`, 'i'));
+      // Utiliser une expression régulière pour capturer toutes les balises <script> une par une
+      const scriptMatches = sourceCode.match(/<script[^>]*>([\s\S]*?)<\/script>/gi);
 
-      if (scriptMatch) {
-          const scriptContent = scriptMatch[1];
-          console.log('Found inline script containing GTM ID.');
-          console.log('Captured script content:', scriptContent);  // Afficher le script capturé
-          isGTMFound = true;
-          
-          const siteHostname = new URL(url).hostname;
-          const mainDomain = siteHostname.split('.').slice(-2).join('.');
-          const subdomainPattern = new RegExp(`\\b${mainDomain.replace('.', '\\.')}`, 'i');
-      
-          if (scriptContent.includes('GTM-') && subdomainPattern.test(scriptContent)) {
-              console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
-              isProxified = true;
-          } else {
-              console.log('GTM is not proxified.');
-          }
-      } else {
-          console.log('No GTM-related inline script found.');
-      }
+    if (scriptMatches) {
+    let isGTMFound = false;
+    let isProxified = false;
+
+    scriptMatches.forEach((scriptTag) => {
+        // Vérifier si le script contient un ID GTM spécifique (ex. GTM-XXXXXXX)
+        if (/GTM-[A-Z0-9]+/.test(scriptTag)) {
+            console.log('Found inline script containing GTM ID.');
+            console.log('Captured script content:', scriptTag);  // Afficher le script capturé
+            isGTMFound = true;
+
+            // Extraire le nom de domaine
+            const siteHostname = new URL(url).hostname;
+            const mainDomain = siteHostname.split('.').slice(-2).join('.');
+            const subdomainPattern = new RegExp(`\\b${mainDomain.replace('.', '\\.')}`, 'i');
+
+            // Vérifier si le domaine est présent dans le script capturé
+            if (subdomainPattern.test(scriptTag)) {
+                console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
+                isProxified = true;
+            } else {
+                console.log('GTM is not proxified.');
+            }
+        }
+    });
+
+    // Si aucun script GTM n'a été trouvé
+    if (!isGTMFound) {
+        console.log('No GTM-related inline script found.');
+    }
+} else {
+    console.log('No <script> tags found in the source code.');
+}
 
     }
 
