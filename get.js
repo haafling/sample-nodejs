@@ -41,8 +41,6 @@ app.post('/analyze', async (req, res) => {
     console.log('Page loaded. Extracting source code...');
     const sourceCode = await page.content();
 
-    console.log('Page source code:', sourceCode); // Log the source code for debugging
-
     let isGTMFound = sourceCode.includes('?id=GTM-');
     let isProxified = false;
     let gtmDomain = '';
@@ -61,7 +59,7 @@ app.post('/analyze', async (req, res) => {
         const siteHostname = new URL(url).hostname;
         const mainDomain = siteHostname.split('.').slice(-2).join('.');
 
-        if (gtmDomain === 'www.googletagmanager.com' || (!gtmDomain.includes('google') && gtmDomain.endsWith(mainDomain))) {
+        if (!gtmDomain.includes('google') && gtmDomain.endsWith(mainDomain)) {
           isProxified = true;
           console.log('The GTM domain appears to be proxified.');
         } else {
@@ -70,7 +68,7 @@ app.post('/analyze', async (req, res) => {
       }
     } else {
       console.log('No GTM snippet found via script src.');
-      const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\s\S]*?GTM-[\s\S]*?)</script>`, 'i'));
+      const scriptMatch = sourceCode.match(new RegExp(`<script[^>]*>([\\s\\S]*?GTM-[\\s\\S]*?)</script>`, 'i'));
 
       if (scriptMatch) {
         console.log('GTM ID found within inline script.');
@@ -79,14 +77,9 @@ app.post('/analyze', async (req, res) => {
         const mainDomain = siteHostname.split('.').slice(-2).join('.');
         const subdomainPattern = new RegExp(`\b${mainDomain.replace('.', '\.')}`, 'i');
 
-        if (scriptContent.includes('GTM-')) {
-          isGTMFound = true;
-          if (scriptContent.includes('www.googletagmanager.com')) {
-            console.log('The GTM domain is from googletagmanager.com and is not proxified.');
-          } else if (subdomainPattern.test(scriptContent)) {
-            isProxified = true;
-            console.log('The inline script appears to be proxified.');
-          }
+        if (scriptContent.includes('GTM-') && subdomainPattern.test(scriptContent)) {
+          isProxified = true;
+          console.log('The inline script appears to be proxified.');
         }
       }
     }
@@ -98,7 +91,8 @@ app.post('/analyze', async (req, res) => {
       url,
       gtmDomain,
       isProxified,
-      isGTMFound
+      isGTMFound,
+      sourceCode
     };
 
     console.log('Sending JSON response:', jsonResponse); // Log the JSON response
