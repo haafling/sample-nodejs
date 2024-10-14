@@ -111,7 +111,7 @@ async function handleAnalysis(req, res, url) {
 
             const siteHostname = new URL(url).hostname;
             const mainDomain = siteHostname.split('.').slice(-2).join('.');
-            const subdomainPattern = new RegExp(`\\b${mainDomain.replace('.', '\\.')}`, 'i');
+            const subdomainPattern = new RegExp(`\b${mainDomain.replace('.', '\.')}`, 'i');
 
             if (subdomainPattern.test(scriptTag)) {
               console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
@@ -128,6 +128,27 @@ async function handleAnalysis(req, res, url) {
       } else {
         console.log('No <script> tags found in the source code.');
       }
+
+      // Nouveau cas : recherche de "?aw=" dans les scripts
+      console.log('Checking for scripts containing "?aw="...');
+      if (scriptMatches) {
+        scriptMatches.forEach((scriptTag) => {
+          if (/\?aw=/.test(scriptTag)) {
+            isGTMFound = true;
+            console.log('Found script containing "?aw=".');
+
+            const siteHostname = new URL(url).hostname;
+            const mainDomain = siteHostname.split('.').slice(-2).join('.');
+
+            if (scriptTag.includes(mainDomain)) {
+              isProxified = true;
+              console.log('Script containing "?aw=" is proxified (site domain detected).');
+            } else {
+              console.log('Script containing "?aw=" is not proxified.');
+            }
+          }
+        });
+      }
     }
 
     await browser.close();
@@ -137,7 +158,8 @@ async function handleAnalysis(req, res, url) {
       url,
       gtmDomain,
       isProxified,
-      isGTMFound
+      isGTMFound,
+      sourceCode
     };
 
     console.log('Sending JSON response:', jsonResponse); // Log the JSON response
