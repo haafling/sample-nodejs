@@ -158,8 +158,7 @@ async function handleAnalysis(req, res, url) {
       url,
       gtmDomain,
       isProxified,
-      isGTMFound,
-      sourceCode
+      isGTMFound
     };
 
     console.log('Sending JSON response:', jsonResponse); // Log the JSON response
