@@ -1,175 +1,172 @@
-const puppeteer = require('puppeteer-extra');
-const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const express = require('express');
-const pLimit = require('p-limit'); // Ajout de p-limit
+/*
+ * Resilient Express + Puppeteer-extra (Stealth) service
+ * • Singleton browser with auto-relaunch on crash
+ * • Concurrency limit: 2 analyses at once
+ * • Health check GET /
+ * • POST /analyze → { jobId }
+ * • GET  /result/:jobId → { status, result?, error? }
+ */
 
-const app = express();
+const express       = require('express');
+const puppeteer     = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const pLimit        = require('p-limit');
+const psl           = require('psl');
+const { v4: uuidv4 }= require('uuid');
+
 puppeteer.use(StealthPlugin());
 
-app.use(express.json()); // Parse JSON bodies
+const app = express();
+app.use(express.json({ limit: '10kb' }));
 
-// Limite à 2 tâches simultanées
-const limit = pLimit(1);
+// In-memory job store
+const jobs = new Map();
 
-app.post('/analyze', async (req, res) => {
-  const { url } = req.body;
+// Concurrency limiter: max 2 parallel analyses
+const limit = pLimit(2);
 
-  console.log('Received request body:', req.body); // Log request body
-
-  if (!url) {
-    console.log('No URL provided in the request');
-    return res.status(400).json({ error: 'URL is required' });
+// --- Singleton browser with auto-relaunch ---
+let browser = null;
+async function getBrowser() {
+  if (browser && browser.isConnected()) {
+    return browser;
   }
-
-  try {
-    // Utilise p-limit pour gérer une file d'attente et exécuter 2 tâches maximum à la fois
-    await limit(() => handleAnalysis(req, res, url));
-  } catch (error) {
-    console.error('Error occurred during the analysis:', error);
-    res.status(500).json({ error: 'Failed to analyze the page' });
+  if (browser) {
+    try { await browser.close(); } catch (e) { /* ignore */ }
   }
+  browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--single-process'
+    ],
+    timeout: 0,
+    dumpio: false
+  });
+  console.log('🔄 Browser (re)launched');
+  return browser;
+}
+
+// Catch and recover from unhandled errors
+process.on('unhandledRejection', async err => {
+  console.error('UnhandledRejection', err);
+  await getBrowser();
+});
+process.on('uncaughtException', async err => {
+  console.error('UncaughtException', err);
+  await getBrowser();
 });
 
-async function handleAnalysis(req, res, url) {
+// --- Health check ---
+app.get('/', (_req, res) => res.send('OK'));
+
+// --- Enqueue analysis ---
+app.post('/analyze', (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+  try { new URL(url); }
+  catch { return res.status(400).json({ error: 'Invalid URL' }); }
+
+  const jobId = uuidv4();
+  jobs.set(jobId, { status: 'pending' });
+  res.json({ jobId });
+
+  // launch work asynchronously, without blocking response
+  setImmediate(() => {
+    limit(() => handleAnalysis(jobId, url))
+      .catch(err => console.error(`Job ${jobId} failed:`, err));
+  });
+});
+
+// --- Fetch job result ---
+app.get('/result/:id', (req, res) => {
+  const job = jobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json(job);
+});
+
+// --- Core analysis logic ---
+async function handleAnalysis(jobId, url) {
+  let page = null;
   try {
-    console.log(`Navigating to ${url}...`);
+    const b = await getBrowser();
+    page = await b.newPage();
+    page.setDefaultNavigationTimeout(30000);
+    page.setDefaultTimeout(30000);
 
-    const browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'] // Ajoutez ces options
-    });
-    const page = await browser.newPage();
+    // log page errors without crashing
+    page.on('error', err => console.error('Page error:', err));
+    page.on('pageerror', err => console.error('Page uncaught exception:', err));
 
-    console.log('Browser launched, new page created.');
-
+    // set headers
     await page.setExtraHTTPHeaders({
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
       'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8'
+      'Accept': 'text/html'
     });
 
-    console.log('Headers set. Navigating to the page...');
-
-    // Ajouter l'interception des requêtes pour bloquer certains types de ressources
+    // block heavy resources
     await page.setRequestInterception(true);
-
-    page.on('request', (req) => {
-      const resourceType = req.resourceType();
-      if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
-        req.abort(); // Bloque ces ressources pour accélérer le chargement
-      } else {
-        req.continue();
-      }
+    page.on('request', req => {
+      const t = req.resourceType();
+      if (t === 'image' || t === 'stylesheet' || t === 'font') req.abort();
+      else req.continue();
     });
 
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-
-    console.log('Page loaded. Extracting source code...');
-    const sourceCode = await page.content();
-
-    let isGTMFound = sourceCode.includes('?id=GTM-');
-    let isProxified = false;
-    let gtmDomain = '';
-
-    if (isGTMFound) {
-      console.log('GTM snippet found in the source code.');
-
-      const gtmMatch = sourceCode.match(/src=["']([^"']*\?id=GTM-[^"']*)["']/);
-      if (gtmMatch) {
-        let gtmSrc = gtmMatch[1];
-
-        // Si l'URL commence par "//", ajoutez "https:" pour en faire une URL complète
-        if (gtmSrc.startsWith('//')) {
-          gtmSrc = 'https:' + gtmSrc; // Ajouter "https:" comme schéma
-        }
-
-        const gtmUrl = new URL(gtmSrc);
-        gtmDomain = gtmUrl.hostname;
-
-        console.log(`GTM Domain: ${gtmDomain}`);
-
-        const siteHostname = new URL(url).hostname;
-        const mainDomain = siteHostname.split('.').slice(-2).join('.');
-
-        if (!gtmDomain.includes('google') && gtmDomain.endsWith(mainDomain)) {
-          isProxified = true;
-          console.log('The GTM domain appears to be proxified.');
-        } else {
-          console.log('The GTM domain is not proxified.');
-        }
-      }
-    } else {
-      console.log('No GTM ID found in the source code, checking for inline script...');
-
-      const scriptMatches = sourceCode.match(/<script[^>]*>([\s\S]*?)<\/script>/gi);
-      if (scriptMatches) {
-        scriptMatches.forEach((scriptTag) => {
-          if (/GTM-[A-Z0-9]+/.test(scriptTag)) {
-            isGTMFound = true;
-            console.log('Found inline script containing GTM ID.');
-            console.log('Captured script content:', scriptTag);  // Afficher le script capturé
-
-            const siteHostname = new URL(url).hostname;
-            const mainDomain = siteHostname.split('.').slice(-2).join('.');
-            const subdomainPattern = new RegExp(`\b${mainDomain.replace('.', '\.')}`, 'i');
-
-            if (subdomainPattern.test(scriptTag)) {
-              console.log('GTM is proxified (GTM ID and site domain detected in inline script).');
-              isProxified = true;
-            } else {
-              console.log('GTM is not proxified.');
-            }
-          }
-        });
-
-        if (!isGTMFound) {
-          console.log('No GTM-related inline script found.');
-        }
-      } else {
-        console.log('No <script> tags found in the source code.');
-      }
-
-      // Nouveau cas : recherche de "?aw=" dans les scripts
-      console.log('Checking for scripts containing "?aw="...');
-      if (scriptMatches) {
-        scriptMatches.forEach((scriptTag) => {
-          if (/\?aw=/.test(scriptTag)) {
-            isGTMFound = true;
-            console.log('Found script containing "?aw=".');
-
-            const siteHostname = new URL(url).hostname;
-            const mainDomain = siteHostname.split('.').slice(-2).join('.');
-
-            if (scriptTag.includes(mainDomain)) {
-              isProxified = true;
-              console.log('Script containing "?aw=" is proxified (site domain detected).');
-            } else {
-              console.log('Script containing "?aw=" is not proxified.');
-            }
-          }
-        });
+    // retry navigation up to 2 times
+    let html;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        html = await page.content();
+        break;
+      } catch (e) {
+        console.warn(`goto attempt #${attempt + 1} failed:`, e.message);
+        if (attempt === 1) throw e;
       }
     }
 
-    await browser.close();
-    console.log('Browser closed successfully.');
+    // GTM detection
+    const isGTMFound = html.includes('?id=GTM-');
+    let isProxified = false;
+    let gtmDomain   = '';
 
-    const jsonResponse = {
-      url,
-      gtmDomain,
-      isProxified,
-      isGTMFound
-    };
+    if (isGTMFound) {
+      const m = html.match(/src=["']([^"']*\?id=GTM-[^"']*)["']/);
+      if (m) {
+        let src = m[1].startsWith('//') ? 'https:' + m[1] : m[1];
+        try {
+          const host = new URL(src).hostname;
+          gtmDomain = host;
+          const main = new URL(url).hostname.split('.').slice(-2).join('.');
+          if (!host.includes('google') && host.endsWith(main)) {
+            isProxified = true;
+          }
+        } catch {}
+      }
+    }
 
-    console.log('Sending JSON response:', jsonResponse); // Log the JSON response
-    res.json(jsonResponse);
-
-  } catch (error) {
-    console.error('Error occurred during the analysis:', error);
-    res.status(500).json({ error: 'Failed to analyze the page' });
+    // store result
+    jobs.set(jobId, {
+      status: 'done',
+      result: { url, gtmDomain, isProxified, isGTMFound }
+    });
+  } catch (err) {
+    console.error(`Error in job ${jobId}:`, err.stack || err);
+    jobs.set(jobId, { status: 'error', error: err.message });
+  } finally {
+    if (page) {
+      try { await page.close(); }
+      catch (e) { console.error('Failed to close page:', e); }
+    }
   }
 }
 
-app.listen(3000, '0.0.0.0', () => {
-  console.log('Server is running on port 3000');
+// --- Start server ---
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
