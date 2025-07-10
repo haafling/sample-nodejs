@@ -1,6 +1,4 @@
-/*
- * Express + Puppeteer-extra (Stealth) service robust against navigation timeouts
- */
+
 
 const express       = require('express');
 const puppeteer     = require('puppeteer-extra');
