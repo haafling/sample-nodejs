@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer-core'); // switched to core
+const puppeteer = require('puppeteer-extra'); // switched to core
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 const express = require('express');
 const pLimit = require('p-limit');
